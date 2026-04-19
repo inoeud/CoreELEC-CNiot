@@ -7,24 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Source
-        uses: actions/checkout@v4
-        with:
-          ref: cniot-core-dev  # 强制指定检出你的开发分支
-          fetch-depth: 1       # 只拉取最新一层即可，节省空间
-
-      - name: Debug Path        # 增加一个路径检查步骤，帮我们看清现场
-        run: |
-          pwd
-          ls -F
-
-      # 第一步：在磁盘还没被扩容插件折腾前，先安装必备依赖
-      - name: Install Dependencies
-        run: |
-          sudo apt update
-          sudo apt install -y libjson-perl rdfind libparse-yapp-perl gperf xsltproc zstd bzip2 patchutils build-essential bc libssl-dev rsync ccache
-
-      # 第二步：深度清理虚拟机空间，腾出约 100GB 空间
+      # 1. 趁着没代码，先暴力扩容，把丢在 /home/runner/work 的空间清理出来
       - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
@@ -36,46 +19,36 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      # 第三步：注入魔改配置与性能优化
+      # 2. 扩容完成后，再拉取源码
+      - name: Checkout Source
+        uses: actions/checkout@v4
+        with:
+          ref: cniot-core-dev
+
+      # 3. 安装依赖 (此时磁盘已经扩容完成)
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y libjson-perl rdfind libparse-yapp-perl gperf xsltproc zstd bzip2 patchutils build-essential bc libssl-dev rsync ccache
+
+      # 4. 执行魔改逻辑 (此时 packages 目录绝对存在)
       - name: Pre-Build Fixes
         run: |
-          # 1. 自动定位根目录 (无论 GitHub 把代码拉到了哪)
-          ROOT_DIR=$(pwd)
-          echo "Current Root: $ROOT_DIR"
-          
-          # 2. 全局搜索 package.mk 位置
-          UBOOT_PATH=$(find . -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | grep -v "CNIoT-CORE" | head -n 1)
-          
-          if [ -z "$UBOOT_PATH" ]; then
-            echo "FATAL: 真的找不到 package.mk！当前目录内容如下："
-            ls -R . | head -n 20
-            exit 1
-          fi
-          
-          # 转为绝对路径防止出错
-          UBOOT_DIR=$(cd $(dirname "$UBOOT_PATH"); pwd)
+          # 动态查找并克隆 U-Boot
+          UBOOT_PATH=$(find packages/ -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | grep -v "CNIoT-CORE" | head -n 1)
+          UBOOT_DIR=$(dirname "$UBOOT_PATH")
           NEW_UBOOT_DIR="${UBOOT_DIR}-CNIoT-CORE"
           
-          echo "Found U-Boot at: $UBOOT_DIR"
+          echo "Cloning U-Boot from $UBOOT_DIR"
           cp -r "$UBOOT_DIR" "$NEW_UBOOT_DIR"
-          
-          # 修改包名
           sed -i 's/PKG_NAME="u-boot"/PKG_NAME="u-boot-CNIoT-CORE"/g' "$NEW_UBOOT_DIR/package.mk"
           
-          # 3. 注入 A73 优化
-          # 使用 find 寻找 options 文件，防止路径层级变化
-          OPT_FILE=$(find . -path "*/CNIoT-CORE/options" | head -n 1)
-          if [ -f "$OPT_FILE" ]; then
-             echo 'TARGET_CPU="cortex-a73"' >> "$OPT_FILE"
-             echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$OPT_FILE"
-             echo "A73 Injected to $OPT_FILE"
-          else
-             echo "Error: CNIoT-CORE options not found"
-             exit 1
-          fi
-       
-             
-      # 第四步：设置编译缓存 (加速后续构建)
+          # 注入 A73 优化
+          OPT_FILE="projects/Amlogic-ce/devices/CNIoT-CORE/options"
+          echo 'TARGET_CPU="cortex-a73"' >> "$OPT_FILE"
+          echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$OPT_FILE"
+          echo "A73 Optimization Injected."
+
       - name: Setup Ccache
         uses: actions/cache@v4
         with:
@@ -84,13 +57,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
-      # 第五步：正式开始编译
       - name: Build Image
         run: |
           export CCACHE_DIR=$(pwd)/.ccache
           PROJECT=Amlogic-ce ARCH=aarch64 DEVICE=CNIoT-CORE make image
 
-      # 第六步：上传编译产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
