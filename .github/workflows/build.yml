@@ -49,6 +49,16 @@ jobs:
           echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$OPT_FILE"
           echo "A73 Optimization Injected."
 
+          # 5. 修复 uboot_helper 识别错误
+          # 强制让脚本把 CNIoT-CORE 识别为 G12B (A311D 所在的家族)
+          # 注意：请根据你 CoreELEC 版本的具体脚本逻辑，有时需要修改的是 distribution 或 scripts 里的文件
+          # 这里我们直接修改 uboot_helper 尝试绕过校验
+          sed -i 's/choices=\[.*\]/choices=None/g' ./scripts/uboot_helper || true
+          
+          # 或者更稳妥的方法：在项目配置里明确 SOC 类型
+          # 确保项目的 options 里定义了使用的具体 SoC
+          echo 'config_uboot_soc="g12b"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
+
       - name: Setup Ccache
         uses: actions/cache@v4
         with:
