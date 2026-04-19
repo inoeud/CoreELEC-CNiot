@@ -30,22 +30,49 @@ jobs:
 
       # 第三步：注入魔改配置与性能优化
       - name: Pre-Build Fixes
-        run: |
-          # 1. 动态克隆 U-Boot 包，绕过构建系统校验
-          UBOOT_SRC=$(find packages -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | xargs dirname | head -n 1)
-          cp -r "$UBOOT_SRC" "${UBOOT_SRC}-CNIoT-CORE"
-          sed -i 's/PKG_NAME="u-boot"/PKG_NAME="u-boot-CNIoT-CORE"/g' "${UBOOT_SRC}-CNIoT-CORE/package.mk"
-          
-          # 2. 注入 A311D 性能优化 (Cortex-A73 + Crypto 加速)
-          # 确保这些参数直接进入你的设备 options
-          echo 'TARGET_CPU="cortex-a73"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
-          echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
-          
-          # 3. 容错处理：确保 DTS 文件在正确的位置（防止之前的 patch 报错）
-          if [ -f "projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch" ]; then
-            mkdir -p projects/Amlogic-ce/devices/CNIoT-CORE/boot/
-            mv projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch projects/Amlogic-ce/devices/CNIoT-CORE/boot/meson-g12b-a311d-cniot-core.dts
-          fi
+              run: |
+                # 确保在仓库根目录执行
+                cd $GITHUB_WORKSPACE
+                
+                # 1. 动态查找 u-boot 路径 (增加容错，排除已生成的备份)
+                UBOOT_PATH=$(find packages/ -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | grep -v "CNIoT-CORE" | head -n 1)
+                
+                if [ -z "$UBOOT_PATH" ]; then
+                  echo "Error: Could not find u-boot package.mk"
+                  exit 1
+                fi
+                
+                UBOOT_DIR=$(dirname "$UBOOT_PATH")
+                NEW_UBOOT_DIR="${UBOOT_DIR}-CNIoT-CORE"
+                
+                # 物理克隆
+                cp -r "$UBOOT_DIR" "$NEW_UBOOT_DIR"
+                
+                # 修改包名防止冲突
+                sed -i 's/PKG_NAME="u-boot"/PKG_NAME="u-boot-CNIoT-CORE"/g' "$NEW_UBOOT_DIR/package.mk"
+                
+                # 2. 注入 A311D A73 优化参数
+                # 确保目录存在
+                TARGET_OPTIONS="projects/Amlogic-ce/devices/CNIoT-CORE/options"
+                if [ -f "$TARGET_OPTIONS" ]; then
+                   echo 'TARGET_CPU="cortex-a73"' >> "$TARGET_OPTIONS"
+                   echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$TARGET_OPTIONS"
+                   echo "A73 Optimization injected."
+                else
+                   echo "Error: $TARGET_OPTIONS not found!"
+                   exit 1
+                fi
+                
+                # 3. DTS 自动迁移逻辑
+                DTS_PATCH="projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch"
+                if [ -f "$DTS_PATCH" ]; then
+                  mkdir -p projects/Amlogic-ce/devices/CNIoT-CORE/boot/
+                  mv "$DTS_PATCH" projects/Amlogic-ce/devices/CNIoT-CORE/boot/meson-g12b-a311d-cniot-core.dts
+                  echo "DTS patch migrated to boot source."
+                fi
+
+
+      
 
       # 第四步：设置编译缓存 (加速后续构建)
       - name: Setup Ccache
