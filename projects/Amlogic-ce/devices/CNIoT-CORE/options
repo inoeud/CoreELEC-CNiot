@@ -159,3 +159,9 @@
 
   # TEE supported SoC
     TEE_SOC="A311D S928X A311D2 S905W2 S905X4 S905Y4 S905X5M S905X5 S905A"
+
+	# 核心修正：告诉脚本这是 A311D 所在的 G12B 家族
+	PKG_ARCH="g12b"
+	SOC="g12b"
+	# 确保引导程序匹配
+	config_uboot_soc="g12b"
