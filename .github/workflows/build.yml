@@ -10,18 +10,25 @@ jobs:
       - name: Checkout Source
         uses: actions/checkout@v4
 
-      - name: Maximize Disk Space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 5120
-          remove-android: 'true'
-          remove-dotnet: 'true'
-
+      # 第一步：在磁盘还没被扩容插件折腾前，先安装必备依赖
       - name: Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y libjson-perl rdfind libparse-yapp-perl gperf xsltproc zstd bzip2 patchutils build-essential bc libssl-dev rsync ccache
 
+      # 第二步：深度清理虚拟机空间，腾出约 100GB 空间
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 5120
+          temp-reserve-mb: 100
+          remove-android: 'true'
+          remove-dotnet: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      # 第三步：注入魔改配置与性能优化
       - name: Pre-Build Fixes
         run: |
           # 1. 动态克隆 U-Boot 包，绕过构建系统校验
@@ -29,11 +36,18 @@ jobs:
           cp -r "$UBOOT_SRC" "${UBOOT_SRC}-CNIoT-CORE"
           sed -i 's/PKG_NAME="u-boot"/PKG_NAME="u-boot-CNIoT-CORE"/g' "${UBOOT_SRC}-CNIoT-CORE/package.mk"
           
-          # 2. 注入 A311D 满血性能优化 (覆盖全局 A53 设置)
-          # 我们直接把参数追加到你的设备 options 里
+          # 2. 注入 A311D 性能优化 (Cortex-A73 + Crypto 加速)
+          # 确保这些参数直接进入你的设备 options
           echo 'TARGET_CPU="cortex-a73"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
           echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
+          
+          # 3. 容错处理：确保 DTS 文件在正确的位置（防止之前的 patch 报错）
+          if [ -f "projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch" ]; then
+            mkdir -p projects/Amlogic-ce/devices/CNIoT-CORE/boot/
+            mv projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch projects/Amlogic-ce/devices/CNIoT-CORE/boot/meson-g12b-a311d-cniot-core.dts
+          fi
 
+      # 第四步：设置编译缓存 (加速后续构建)
       - name: Setup Ccache
         uses: actions/cache@v4
         with:
@@ -42,11 +56,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
+      # 第五步：正式开始编译
       - name: Build Image
         run: |
           export CCACHE_DIR=$(pwd)/.ccache
           PROJECT=Amlogic-ce ARCH=aarch64 DEVICE=CNIoT-CORE make image
 
+      # 第六步：上传编译产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
