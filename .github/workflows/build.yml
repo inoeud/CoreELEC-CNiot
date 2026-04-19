@@ -67,6 +67,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ccache-
 
+
+      - name: Patch SOC Identity
+        run: |
+          # 强行给 options 加上 SOC 定义，解决 uboot_helper 报错
+          echo 'PKG_ARCH="g12b"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
+          echo 'SOC="g12b"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
+          echo 'config_uboot_soc="g12b"' >> projects/Amlogic-ce/devices/CNIoT-CORE/options
+
       - name: Build Image
         run: |
           export CCACHE_DIR=$(pwd)/.ccache
