@@ -9,6 +9,14 @@ jobs:
     steps:
       - name: Checkout Source
         uses: actions/checkout@v4
+        with:
+          ref: cniot-core-dev  # 强制指定检出你的开发分支
+          fetch-depth: 1       # 只拉取最新一层即可，节省空间
+
+      - name: Debug Path        # 增加一个路径检查步骤，帮我们看清现场
+        run: |
+          pwd
+          ls -F
 
       # 第一步：在磁盘还没被扩容插件折腾前，先安装必备依赖
       - name: Install Dependencies
@@ -31,51 +39,42 @@ jobs:
       # 第三步：注入魔改配置与性能优化
       - name: Pre-Build Fixes
         run: |
-          # 1. 强制对齐到仓库根目录
-          cd $GITHUB_WORKSPACE
+          # 1. 自动定位根目录 (无论 GitHub 把代码拉到了哪)
+          ROOT_DIR=$(pwd)
+          echo "Current Root: $ROOT_DIR"
           
-          # 2. 动态查找 u-boot 路径，增加容错保护
-          # 显式指定从 packages 目录开始找，并排除之前可能残留的备份目录
-          UBOOT_PATH=$(find packages/ -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | grep -v "CNIoT-CORE" | head -n 1)
+          # 2. 全局搜索 package.mk 位置
+          UBOOT_PATH=$(find . -name "package.mk" | xargs grep -l 'PKG_NAME="u-boot"' | grep -v "CNIoT-CORE" | head -n 1)
           
           if [ -z "$UBOOT_PATH" ]; then
-            echo "错误: 找不到 u-boot 的 package.mk，请检查项目结构！"
-            ls -R packages/ | grep u-boot || true
+            echo "FATAL: 真的找不到 package.mk！当前目录内容如下："
+            ls -R . | head -n 20
             exit 1
           fi
           
-          UBOOT_DIR=$(dirname "$UBOOT_PATH")
+          # 转为绝对路径防止出错
+          UBOOT_DIR=$(cd $(dirname "$UBOOT_PATH"); pwd)
           NEW_UBOOT_DIR="${UBOOT_DIR}-CNIoT-CORE"
           
-          # 使用双引号包裹变量，防止 cp 报错
-          echo "正在克隆 U-Boot 从 $UBOOT_DIR 到 $NEW_UBOOT_DIR"
+          echo "Found U-Boot at: $UBOOT_DIR"
           cp -r "$UBOOT_DIR" "$NEW_UBOOT_DIR"
           
           # 修改包名
           sed -i 's/PKG_NAME="u-boot"/PKG_NAME="u-boot-CNIoT-CORE"/g' "$NEW_UBOOT_DIR/package.mk"
           
-          # 3. 注入 A311D 性能优化参数 (Cortex-A73)
-          TARGET_OPTIONS="projects/Amlogic-ce/devices/CNIoT-CORE/options"
-          if [ -f "$TARGET_OPTIONS" ]; then
-             echo "" >> "$TARGET_OPTIONS" # 换行保护
-             echo 'TARGET_CPU="cortex-a73"' >> "$TARGET_OPTIONS"
-             echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$TARGET_OPTIONS"
-             echo "A73 优化参数已成功注入 $TARGET_OPTIONS"
+          # 3. 注入 A73 优化
+          # 使用 find 寻找 options 文件，防止路径层级变化
+          OPT_FILE=$(find . -path "*/CNIoT-CORE/options" | head -n 1)
+          if [ -f "$OPT_FILE" ]; then
+             echo 'TARGET_CPU="cortex-a73"' >> "$OPT_FILE"
+             echo 'TARGET_CPU_FLAGS="+crc+fp+simd+crypto"' >> "$OPT_FILE"
+             echo "A73 Injected to $OPT_FILE"
           else
-             echo "错误: 找不到设备配置文件 $TARGET_OPTIONS"
+             echo "Error: CNIoT-CORE options not found"
              exit 1
           fi
-          
-          # 4. 自动搬运 DTS（防止文件放错位置导致内核编译失败）
-          DTS_PATH="projects/Amlogic-ce/devices/CNIoT-CORE/patches/linux/linux-001-add-cniot-core-dts.patch"
-          if [ -f "$DTS_PATH" ]; then
-            mkdir -p projects/Amlogic-ce/devices/CNIoT-CORE/boot/
-            mv "$DTS_PATH" projects/Amlogic-ce/devices/CNIoT-CORE/boot/meson-g12b-a311d-cniot-core.dts
-            echo "检测到 Patch 格式的 DTS，已自动修复到 boot 目录。"
-          fi
-
-      
-
+       
+             
       # 第四步：设置编译缓存 (加速后续构建)
       - name: Setup Ccache
         uses: actions/cache@v4
